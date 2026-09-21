@@ -1,0 +1,130 @@
+name: pr-attribution
+description: >-
+  Fail a pull request whose title, body, or own commit messages (base..head)
+  match any caller-supplied extended regular expression. Policy-free: the
+  patterns are inputs; nothing the caller did not name is scanned.
+author: Stratech GmbH
+
+inputs:
+  patterns:
+    description: >-
+      JSON array of {"label": "...", "pattern": "..."} objects. Each pattern is
+      a POSIX extended regular expression matched case-insensitively (grep -niE)
+      against the pull-request title, the body, and the messages of the pull
+      request's own commits. Required, no default: an empty, malformed, or
+      unparsable list fails the run. Escape backslashes as JSON requires
+      ("\\." for a literal dot).
+    required: true
+  remediation-hint:
+    description: >-
+      Text appended to the failure message, for example a pointer to the
+      caller's conventions document. Empty means no hint.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the calling repository with full history
+      # A composite action runs inside the caller's job: this checks out the
+      # CALLER's repository at the pull request's merge ref. Full history so
+      # base..head resolves; no credentials persist because nothing pushes.
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Check the pull request title, body, and commits against the patterns
+      # Untrusted pull-request fields and the policy pass via env, never
+      # interpolated into the shell, so a crafted title, body, or pattern
+      # cannot inject commands. The range is this pull request's own commits,
+      # so a match already merged into the base cannot fail an unrelated PR.
+      shell: bash
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PATTERNS: ${{ inputs.patterns }}
+        REMEDIATION_HINT: ${{ inputs.remediation-hint }}
+      run: |
+        set -euo pipefail
+        export LC_ALL=C
+
+        for tool in git jq grep; do
+          command -v "$tool" >/dev/null 2>&1 \
+            || { echo "FAIL: pr-attribution: '$tool' is required on the runner." >&2; exit 1; }
+        done
+
+        # Policy comes only from the caller. The runner does not enforce a
+        # composite action's required inputs, so the shell does: an empty or
+        # malformed list would be a guard that never fails.
+        if ! count="$(printf '%s' "${PATTERNS:-}" | jq -e '
+              if type == "array" and length > 0
+                 and all(.[]; type == "object" and keys == ["label", "pattern"]
+                         and (.label | type) == "string" and (.label | length) > 0
+                         and ((.label | test("\n")) | not)
+                         and (.pattern | type) == "string" and (.pattern | length) > 0
+                         and ((.pattern | test("\n")) | not))
+              then length else error("invalid patterns") end' 2>/dev/null)"; then
+          echo "FAIL: pr-attribution: 'patterns' must be a non-empty JSON array of {\"label\", \"pattern\"} objects with non-empty single-line strings." >&2
+          exit 1
+        fi
+
+        # Resolve this pull request's own commit range into its messages. Fail
+        # closed: an unresolvable revision aborts the guard rather than yielding
+        # an empty, and therefore silently clean, buffer to scan.
+        range_messages() {
+          git rev-parse --verify --quiet "$1^{commit}" >/dev/null \
+            || { echo "pr-attribution: cannot resolve base revision: $1" >&2; return 1; }
+          git rev-parse --verify --quiet "$2^{commit}" >/dev/null \
+            || { echo "pr-attribution: cannot resolve head revision: $2" >&2; return 1; }
+          git log --format=%B "$1".."$2"
+        }
+
+        # Regression, kept in the shipped guard so it runs on every call: this
+        # scan once ran without -e, so a 128 from git log left the buffer empty
+        # and the guard passed an unscanned range. Prove the resolver still
+        # fails closed before trusting it below.
+        if range_messages 0000000000000000000000000000000000000000 "$HEAD_SHA" >/dev/null 2>&1; then
+          echo "FAIL: self-test: an unresolvable base revision did not fail the scan." >&2
+          exit 1
+        fi
+        echo "pr-attribution: self-test OK (an unresolvable range fails closed)"
+
+        if ! commits="$(range_messages "$BASE_SHA" "$HEAD_SHA")"; then
+          echo "FAIL: cannot scan this pull request's commit range; refusing to pass it unscanned." >&2
+          exit 1
+        fi
+        text="${PR_TITLE:-}"$'\n'"${PR_BODY:-}"$'\n'"$commits"
+
+        fail=0
+        i=0
+        while [ "$i" -lt "$count" ]; do
+          label="$(printf '%s' "$PATTERNS" | jq -r --argjson i "$i" '.[$i].label')"
+          pattern="$(printf '%s' "$PATTERNS" | jq -r --argjson i "$i" '.[$i].pattern')"
+          # -n: line numbers within the scanned buffer; -e: a pattern may begin
+          # with '-'. grep exits 2 on a malformed expression: that is a broken
+          # policy, not a clean scan, so it fails the run.
+          hits="$(printf '%s' "$text" | grep -niE -e "$pattern")" && rc=0 || rc=$?
+          case "$rc" in
+            0)
+              fail=1
+              echo "ERROR: forbidden pattern: $label"
+              printf '%s\n' "$hits" | sed 's/^/       matched: /' ;;
+            1) ;;
+            *)
+              echo "FAIL: pr-attribution: the pattern for '$label' is not a valid extended regular expression (grep exit $rc)." >&2
+              exit 1 ;;
+          esac
+          i=$((i + 1))
+        done
+        if [ "$fail" -ne 0 ]; then
+          echo ""
+          echo "FAIL: the pull request title, body, or commit messages match a forbidden pattern."
+          if [ -n "${REMEDIATION_HINT:-}" ]; then
+            printf '%s\n' "$REMEDIATION_HINT" | sed 's/^/      /'
+          fi
+          exit 1
+        fi
+        echo "pr-attribution: OK (no forbidden patterns matched)"

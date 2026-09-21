@@ -1,0 +1,120 @@
+name: pr-issue-labels
+description: >-
+  Copy the labels of the same-repository issues a pull request closes onto the
+  pull request, additively (never removing), skipping caller-supplied label-name
+  prefixes. A snapshot at the triggering event, not a subscription to later links.
+author: Stratech GmbH
+
+inputs:
+  exclude-label-prefixes:
+    description: >-
+      Comma-separated label-name prefixes that are never copied, for example
+      "release:, wip-". Whitespace around entries is ignored. Required, no
+      default: an empty list fails the run.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Copy the closing issues' labels onto the pull request
+      # No checkout: the step only talks to the API. github.token is the caller
+      # job's token, so the caller declares issues: read (what makes
+      # closingIssuesReferences non-empty under GITHUB_TOKEN, cli/cli#11841)
+      # and pull-requests: write. Event fields and the policy pass via env,
+      # never interpolated into the shell.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EXCLUDE_LABEL_PREFIXES: ${{ inputs.exclude-label-prefixes }}
+      run: |
+        set -euo pipefail
+        export LC_ALL=C
+
+        for tool in gh jq; do
+          command -v "$tool" >/dev/null 2>&1 \
+            || { echo "FAIL: pr-issue-labels: '$tool' is required on the runner." >&2; exit 1; }
+        done
+
+        case "${PR_NUMBER:-}" in
+          ''|*[!0-9]*)
+            echo "FAIL: pr-issue-labels: invalid pull request number '${PR_NUMBER:-}'." >&2
+            exit 1 ;;
+        esac
+        repo="$REPO_OWNER/$REPO_NAME"
+
+        # Prefixes come only from the caller. The runner does not enforce a
+        # composite action's required inputs, so an empty list fails here
+        # rather than copying every label unfiltered.
+        prefixes="$(printf '%s' "${EXCLUDE_LABEL_PREFIXES:-}" \
+          | jq -Rsc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')"
+        if ! printf '%s' "$prefixes" | jq -e 'length > 0' >/dev/null; then
+          echo "FAIL: pr-issue-labels: 'exclude-label-prefixes' must name at least one label-name prefix." >&2
+          exit 1
+        fi
+
+        # One query: the pull request's current labels plus every issue GitHub
+        # will close with it, each with its repository and labels.
+        query='query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              labels(first: 100) { nodes { name } }
+              closingIssuesReferences(first: 50) {
+                nodes {
+                  number
+                  repository { nameWithOwner }
+                  labels(first: 100) { nodes { name } }
+                }
+              }
+            }
+          }
+        }'
+        if ! response="$(gh api graphql -f query="$query" -F owner="$REPO_OWNER" \
+                          -F name="$REPO_NAME" -F number="$PR_NUMBER")"; then
+          echo "FAIL: cannot read the pull request's closing issues; refusing to guess." >&2
+          exit 1
+        fi
+        if ! printf '%s' "$response" | jq -e '.data.repository.pullRequest | objects' >/dev/null; then
+          echo "FAIL: unexpected GraphQL response (no pull request in it)." >&2
+          exit 1
+        fi
+
+        # Same-repository closing issues -> union of their labels, minus the
+        # excluded prefixes and minus what the pull request already carries.
+        # One name per line, sorted; names may contain spaces, so they are
+        # never word-split below.
+        wanted="$(printf '%s' "$response" | jq -r --arg repo "$repo" --argjson prefixes "$prefixes" '
+          .data.repository.pullRequest as $pr
+          | ($pr.labels.nodes | map(.name)) as $have
+          | [ $pr.closingIssuesReferences.nodes[]
+              | select(.repository.nameWithOwner == $repo)
+              | .labels.nodes[].name ]
+          | unique
+          | map(select(. as $name | ($prefixes | any(. as $p | $name | startswith($p))) | not))
+          | . - $have
+          | .[]')"
+        if [ -z "$wanted" ]; then
+          echo "pr-issue-labels: OK (nothing to add)"
+          exit 0
+        fi
+
+        payload="$(printf '%s\n' "$wanted" | jq -Rn '{labels: [inputs]}')"
+        if ! result="$(printf '%s' "$payload" \
+                        | gh api --method POST "repos/$repo/issues/$PR_NUMBER/labels" --input -)"; then
+          echo "FAIL: could not add the labels to the pull request." >&2
+          exit 1
+        fi
+        # Verify the write landed: the returned label set must carry every
+        # wanted name.
+        missing="$(printf '%s' "$result" | jq -r \
+          --argjson wanted "$(printf '%s\n' "$wanted" | jq -Rn '[inputs]')" \
+          '($wanted - map(.name))[]')"
+        if [ -n "$missing" ]; then
+          echo "FAIL: labels not present on the pull request after the write:" >&2
+          printf '%s\n' "$missing" | sed 's/^/  /' >&2
+          exit 1
+        fi
+        echo "pr-issue-labels: OK (added from the closing issues):"
+        printf '%s\n' "$wanted" | sed 's/^/  /'
