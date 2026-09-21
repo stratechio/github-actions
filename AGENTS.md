@@ -16,8 +16,8 @@ changing the repository.
   `env:`; no `run:` block contains `${{`. Third-party actions are pinned to a 40-hex commit SHA with
   the version in a trailing comment.
 - **Fail closed.** An unresolvable commit range, an empty or malformed policy, an invalid regular
-  expression, or any API error fails the run. A change that turns one of these into a pass is a
-  defect.
+  expression, an API list cut at its page size (`pageInfo.hasNextPage`), or any API error fails the
+  run. A change that turns one of these into a pass is a defect.
 - **Tests move with the shell.** An action change updates its behaviour suite in the same pull
   request; the wiring suite pins the step shape, the `env` maps, and the pins. `bash test/run.sh`
   must pass before a pull request is opened.

@@ -69,14 +69,27 @@ esac
 '''
 
 
-def graphql(pr_labels=(), issues=()):
-    """Shape of the one query the run block sends; issues = [(repo, labels)]."""
+def connection(names, truncated=False):
+    """One GraphQL connection as the query requests it: pageInfo plus nodes."""
+    return {'pageInfo': {'hasNextPage': truncated}, 'nodes': [{'name': n} for n in names]}
+
+
+def graphql(pr_labels=(), issues=(), more_pr_labels=False, more_issues=False,
+            more_issue_labels=()):
+    """Shape of the one query the run block sends; issues = [(repo, labels)].
+
+    The more_* flags mark a connection as cut at the page size (pageInfo
+    hasNextPage true): the pull request's labels, the closing issues, or the
+    labels of the issues at the given indexes.
+    """
     return {'data': {'repository': {'pullRequest': {
-        'labels': {'nodes': [{'name': n} for n in pr_labels]},
-        'closingIssuesReferences': {'nodes': [
-            {'number': i + 1, 'repository': {'nameWithOwner': repo},
-             'labels': {'nodes': [{'name': n} for n in labels]}}
-            for i, (repo, labels) in enumerate(issues)]}}}}}
+        'labels': connection(pr_labels, more_pr_labels),
+        'closingIssuesReferences': {
+            'pageInfo': {'hasNextPage': more_issues},
+            'nodes': [
+                {'number': i + 1, 'repository': {'nameWithOwner': repo},
+                 'labels': connection(labels, i in more_issue_labels)}
+                for i, (repo, labels) in enumerate(issues)]}}}}}
 
 
 class IssueLabelsBehaviorTest(unittest.TestCase):
@@ -208,6 +221,49 @@ class IssueLabelsBehaviorTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIsNone(self.posted())
                 self.assertIn('unexpected GraphQL response', result.stderr)
+
+    def test_query_requests_full_pages_with_page_info(self):
+        # The stub cannot see what the query asked for, so pin the shipped
+        # text: a full page (the GraphQL maximum) for the closing issues and a
+        # pageInfo on every connection the union reads.
+        self.assertIn('closingIssuesReferences(first: 100)', self.shell)
+        self.assertNotIn('first: 50', self.shell)
+        self.assertEqual(self.shell.count('pageInfo { hasNextPage }'), 3)
+
+    def test_truncated_connection_fails_closed(self):
+        issues = [(REPO, ['type:bug']), (REPO, ['priority:low'])]
+        truncated = {
+            'pr labels': graphql(issues=issues, more_pr_labels=True),
+            'closing issues': graphql(issues=issues, more_issues=True),
+            'first issue labels': graphql(issues=issues, more_issue_labels={0}),
+            'last issue labels': graphql(issues=issues, more_issue_labels={1}),
+        }
+        for name, fixture in truncated.items():
+            with self.subTest(connection=name):
+                result = self.invoke(fixture)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIsNone(self.posted(), 'no partial union is written')
+                self.assertIn('closing-issue list is incomplete', result.stderr)
+                self.assertEqual(self.calls.read_text().count('\n'), 1, 'exactly one API read')
+                self.calls.unlink()
+
+    def test_response_without_page_info_fails_closed(self):
+        # The query always asks for pageInfo; a response lacking it is not a
+        # complete read and must not pass as one.
+        fixture = graphql(issues=[(REPO, ['type:bug'])])
+        del fixture['data']['repository']['pullRequest']['closingIssuesReferences']['pageInfo']
+        result = self.invoke(fixture)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIsNone(self.posted())
+        self.assertIn('closing-issue list is incomplete', result.stderr)
+
+    def test_truncated_labels_of_a_cross_repository_issue_are_ignored(self):
+        # Only the same-repository issues feed the union, so a foreign issue's
+        # cut label list is as irrelevant as its labels.
+        fixture = graphql(issues=[('other-org/other-repo', ['type:feature']),
+                                  (REPO, ['type:maintenance', 'phase:review'])],
+                          more_issue_labels={0})
+        self.assert_added(fixture, ['type:maintenance'])
 
     def test_write_failure_fails_closed(self):
         result = self.invoke(graphql(issues=[(REPO, ['type:bug'])]), STUB_POST_EXIT='1')

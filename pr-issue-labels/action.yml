@@ -56,16 +56,19 @@ runs:
         fi
 
         # One query: the pull request's current labels plus every issue GitHub
-        # will close with it, each with its repository and labels.
+        # will close with it, each with its repository and labels. Every
+        # connection asks for a full page (100 is the GraphQL maximum) and its
+        # pageInfo, so a truncated list is detectable below.
         query='query($owner: String!, $name: String!, $number: Int!) {
           repository(owner: $owner, name: $name) {
             pullRequest(number: $number) {
-              labels(first: 100) { nodes { name } }
-              closingIssuesReferences(first: 50) {
+              labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+              closingIssuesReferences(first: 100) {
+                pageInfo { hasNextPage }
                 nodes {
                   number
                   repository { nameWithOwner }
-                  labels(first: 100) { nodes { name } }
+                  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
                 }
               }
             }
@@ -78,6 +81,23 @@ runs:
         fi
         if ! printf '%s' "$response" | jq -e '.data.repository.pullRequest | objects' >/dev/null; then
           echo "FAIL: unexpected GraphQL response (no pull request in it)." >&2
+          exit 1
+        fi
+
+        # Every list the union reads must be complete. GitHub pages a
+        # connection at 100 nodes and reports the cut only in pageInfo, so a
+        # pull request closing more issues than one page, or an issue with more
+        # labels, would otherwise yield a partial union written by a run that
+        # exits 0. Fail closed instead; the strict comparison also fails a
+        # response that carries no pageInfo at all.
+        if ! printf '%s' "$response" | jq -e --arg repo "$repo" '
+              .data.repository.pullRequest
+              | (.labels.pageInfo.hasNextPage == false)
+                and (.closingIssuesReferences.pageInfo.hasNextPage == false)
+                and all(.closingIssuesReferences.nodes[]
+                          | select(.repository.nameWithOwner == $repo);
+                        .labels.pageInfo.hasNextPage == false)' >/dev/null; then
+          echo "FAIL: pr-issue-labels: a label or closing-issue list is incomplete (more than one API page of 100); refusing to write a partial union." >&2
           exit 1
         fi
 
