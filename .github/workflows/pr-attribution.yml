@@ -1,0 +1,55 @@
+name: pr-attribution
+
+# Fail a pull request whose title, body, or own commit messages carry an
+# AI-authorship trailer, so the history reads as human-authored (workspace
+# git-conventions.md, "Pull requests and issues"). PR bodies are written through
+# the API, and the GitHub web UI stamps a co-author trailer of its own when a
+# reviewer clicks "Commit suggestion" on a Copilot review - the two surfaces a
+# local commit hook never sees.
+#
+# EXACT-STRING match, not a keyword scan: bare claude / agent / anthropic.com /
+# copilot are intentionally allowed (this estate is built on AGENTS.md /
+# CLAUDE.md, legitimately links api.anthropic.com, and legitimately discusses
+# the Copilot market). Only the six patterns below fail, and an ordinary user's
+# NNNN+user@users.noreply.github.com co-author trailer stays clean.
+#
+# Managed caller: the scan runs from the composite action pinned below; the six
+# patterns are the policy and live here, mirrored by the unit-tested matcher in
+# stratech-ops (engineering/scripts/check-pr-attribution.sh). Only the commit
+# SHA and version comment on the `uses:` line may differ between repositories
+# (Dependabot bumps them). Reference and maintenance procedure:
+# https://github.com/stratechio/stratech-ops/blob/main/engineering/github/INDEX.md
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: pr-attribution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  attribution:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check PR title, body and commits for AI-attribution trailers
+        uses: stratechio/github-actions/pr-attribution@cc61110931cc06b7052d84a650bacbf23bc4463a # v1.0.0
+        with:
+          # Label/pattern pairs verbatim from check-pr-attribution.sh; the
+          # backslashes are doubled because this block is JSON.
+          patterns: |
+            [
+              {"label": "AI co-author trailer (Co-Authored-By: ...@anthropic.com)", "pattern": "co-authored-by:.*@anthropic\\.com"},
+              {"label": "Claude Code generation footer (Generated with ... Claude Code)", "pattern": "generated with .*claude code"},
+              {"label": "Anthropic noreply address (noreply@anthropic.com)", "pattern": "noreply@anthropic\\.com"},
+              {"label": "Copilot co-author trailer (Co-Authored-By: ... Copilot ...)", "pattern": "co-authored-by:.*copilot"},
+              {"label": "Copilot noreply address (...+Copilot@users.noreply.github.com)", "pattern": "copilot@users\\.noreply\\.github\\.com"},
+              {"label": "Copilot checkpoint commit subject (copilot checkpoint: ...)", "pattern": "^copilot checkpoint:"}
+            ]
+          remediation-hint: |
+            Remove the trailer/footer so the PR reads as human-authored.
+            See workspace git-conventions.md (Pull requests and issues).

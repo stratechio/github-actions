@@ -1,0 +1,47 @@
+name: pr-issue-labels
+
+# Copy the labels of the issues a pull request closes onto the pull request,
+# so a review list filters on the same kind: / sev: / blocks-progress / agent:
+# axes as the issue backlog. The shared policy and decision live at:
+# https://github.com/stratechio/stratech-ops/blob/main/engineering/github/issue-labels.md
+# https://github.com/stratechio/stratech-ops/blob/main/decisions/0094-issue-outcome-labels.md
+# GitHub's own linkage decides what "closes" means:
+# the closing keywords in the PR body (Closes / Fixes / Resolves #N) or a
+# sidebar "Development" link - exactly the set the merge will auto-close.
+# This is a snapshot on opened/edited/reopened, not a subscription to links:
+# adding a sidebar link alone does not run the workflow. After a late link,
+# edit the PR title or body to refresh labels from the current closing issues.
+#
+# ADDITIVE and SAME-REPO only. Labels are added, never removed, so a label put
+# on the PR by hand or by a script (automation:*) survives. stage:* stays on
+# the issue: the outcome's delivery stage is not the PR's review state. Issues
+# in other repositories are skipped - GITHUB_TOKEN cannot read them anyway.
+# Fail-closed: an API failure fails the run instead of silently leaving the PR
+# unlabeled.
+#
+# Managed caller: the copy runs from the composite action pinned below; the
+# excluded prefixes are the policy and live here. Only the commit SHA and
+# version comment on the `uses:` line may differ between repositories
+# (Dependabot bumps them). Reference and maintenance procedure:
+# https://github.com/stratechio/stratech-ops/blob/main/engineering/github/INDEX.md
+
+on:
+  pull_request:
+    types: [opened, edited, reopened]
+
+concurrency:
+  group: pr-issue-labels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inherit:
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: read
+      pull-requests: write
+
+    steps:
+      - name: Copy the closing issues' labels onto the pull request
+        uses: stratechio/github-actions/pr-issue-labels@cc61110931cc06b7052d84a650bacbf23bc4463a # v1.0.0
+        with:
+          exclude-label-prefixes: "stage:"
