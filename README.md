@@ -81,8 +81,9 @@ triggering event; a link added later in the sidebar takes effect on the next `ed
 | `exclude-label-prefixes` | yes | Comma-separated label-name prefixes never copied; whitespace around entries is ignored. |
 
 Both actions fail closed: an empty or malformed policy, an unresolvable commit range, an invalid
-regular expression, or any API error fails the run instead of passing it unscanned. The runner does
-not enforce a composite action's `required:` inputs, so the shell validates them itself.
+regular expression, a label or closing-issue list longer than one API page (100 entries), or any API
+error fails the run instead of passing it unscanned or half-labelled. The runner does not enforce a
+composite action's `required:` inputs, so the shell validates them itself.
 
 ## Versioning
 
