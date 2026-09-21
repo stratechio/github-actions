@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # The GitHub Actions pinned by the workflows and by each composite action.
+  # "/" covers .github/workflows and a root action.yml only, so every action
+  # directory is listed to keep its own actions/checkout pin moving. A host
+  # bump reaches consumers through the next vX.Y.Z tag.
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/pr-attribution"
+      - "/pr-issue-labels"
+    schedule:
+      interval: weekly

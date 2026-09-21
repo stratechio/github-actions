@@ -1,0 +1,30 @@
+name: self-check
+
+# Exercise the pull request's own action bytes end to end: a local
+# `uses: ./pr-attribution` runs the file at the pull request's merge ref, so a
+# change is proven by the pull request that makes it. Not a required check.
+# The label action needs a closing issue and a write, so it is proven by this
+# repository's own consumer-form caller (pr-issue-labels.yml) instead.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: self-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  attribution-self-check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./pr-attribution
+        with:
+          patterns: |
+            [{"label": "self-check marker", "pattern": "^self-check: forbidden$"}]
+          remediation-hint: Remove the self-check marker line from the title, body, or commit message.
