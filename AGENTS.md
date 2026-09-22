@@ -40,8 +40,10 @@ changing the repository.
 
 - Run the suites with `bash test/run.sh`. Preconditions: `python3` with PyYAML 6.0.3, `jq`, `git`;
   `PYTHON=` selects the interpreter. `actionlint` is optional locally and mandatory in CI.
-- Release procedure: merge on `main`, tag the merge commit as an annotated `vX.Y.Z`, push the tag.
-  Never move or delete a tag. Consumers pin the commit the tag points at, bumped by Dependabot.
+- Release procedure: follow [README.md#release](README.md#release). Fetch `main`, verify the merged
+  pull request's landing commit, and tag that exact commit as an annotated `vX.Y.Z`. GitHub rebase
+  merges create no merge commit. Never move or delete a tag. Consumers pin the commit the tag points
+  at, bumped by Dependabot.
 - Report follow-ups as issues in this repository, labelled with the shared `kind:`, `stage:`, and
   `sev:` families.
 
