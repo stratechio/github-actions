@@ -113,9 +113,36 @@ every caller at resolution, which surfaces as a failed required check rather tha
   selects another interpreter.
 - CI runs the suites and `actionlint` on every pull request; `self-check` additionally executes the
   pull request's own `pr-attribution` bytes through a local `uses: ./pr-attribution`.
-- Release: merge, then tag the merge commit (`git tag -a vX.Y.Z -m "..." origin/main`, push the tag,
-  optionally `gh release create vX.Y.Z --verify-tag`). Consumers resolve the commit with
-  `git rev-parse vX.Y.Z^{}`.
+### Release
+
+After a pull request has merged, tag the commit GitHub added to `main`. This repository uses
+rebase merge, which rewrites the pull request commits and creates no merge commit. For a merged,
+rebased pull request, GitHub's `merge_commit_sha` is the commit the base branch was updated to;
+before merge it is only a test merge commit. Fetch `main` and verify the landed commit and action
+files before creating an immutable tag:
+
+```bash
+bash -euo pipefail <<'BASH'
+pr=NUMBER
+tag=vX.Y.Z
+[[ "$pr" =~ ^[0-9]+$ ]]
+[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+git fetch origin main
+landed="$(gh api "repos/stratechio/github-actions/pulls/$pr" \
+  --jq 'select(.merged == true and .base.ref == "main") | .merge_commit_sha')"
+test -n "$landed"
+git merge-base --is-ancestor "$landed" origin/main
+git cat-file -e "${landed}:pr-attribution/action.yml"
+git cat-file -e "${landed}:pr-issue-labels/action.yml"
+git tag -a "$tag" -m "$tag" "$landed"
+git push origin "refs/tags/$tag"
+BASH
+```
+
+Replace `NUMBER` with the merged release PR number and `vX.Y.Z` with the release version.
+For the first release, use PR #2 and `v1.0.0`. Consumers resolve the commit with
+`git rev-parse vX.Y.Z^{}`. Optionally publish a GitHub release with
+`gh release create vX.Y.Z --verify-tag` after the tag is pushed.
 
 ## License
 
