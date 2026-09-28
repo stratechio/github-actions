@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Check PR title, body and commits for AI-attribution trailers
-        uses: stratechio/github-actions/pr-attribution@cc61110931cc06b7052d84a650bacbf23bc4463a # v1.0.0
+        uses: stratechio/github-actions/pr-attribution@6b105793c4a6ecbb5ed442e2b01e3b9da14271ac # v1.0.1
         with:
           # Label/pattern pairs verbatim from check-pr-attribution.sh; the
           # backslashes are doubled because this block is JSON.
