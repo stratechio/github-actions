@@ -5,7 +5,7 @@ consuming repositories. Two actions ship today:
 
 | Action | Does | Caller job permissions |
 |---|---|---|
-| [`pr-attribution`](pr-attribution/action.yml) | Fails a pull request whose title, body, or own commit messages match any caller-supplied extended regular expression | `contents: read` |
+| [`pr-attribution`](pr-attribution/action.yml) | Fails a pull request whose title, body, or own commit messages match any caller-supplied extended regular expression; on a merge-queue candidate, scans every commit the candidate would land and the queued pull request's title and body | `contents: read`; add `pull-requests: read` when the caller also triggers on `merge_group` |
 | [`pr-issue-labels`](pr-issue-labels/action.yml) | Copies the labels of the same-repository issues a pull request closes onto the pull request, additively, skipping caller-supplied label-name prefixes | `issues: read`, `pull-requests: write` |
 
 Every policy value is a required input with no default. The actions carry no organisation-specific
@@ -21,6 +21,8 @@ on:
   pull_request:
     branches: [main]
     types: [opened, edited, reopened, synchronize]
+  merge_group:
+    types: [checks_requested]
 concurrency:
   group: pr-attribution-${{ github.ref }}
   cancel-in-progress: true
@@ -29,8 +31,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      pull-requests: read
     steps:
-      - uses: stratechio/github-actions/pr-attribution@<40-hex commit sha> # v1.0.0
+      - uses: stratechio/github-actions/pr-attribution@<40-hex commit sha> # v1.1.0
         with:
           patterns: |
             [
@@ -62,8 +65,11 @@ jobs:
 
 A composite action cannot add triggers or permissions: the caller lists every activity type its
 policy relies on (`edited` re-scans after a title or body change; `synchronize` re-scans new commits)
-and declares the permissions above. `pr-issue-labels` reads the closing links present at the
-triggering event; a link added later in the sidebar takes effect on the next `edited` run.
+and declares the permissions above. The `merge_group` trigger and `pull-requests: read` are needed
+only where a merge queue requires the check; without a queue the trigger never fires, but the
+permission still applies to every `pull_request` run of that job. `pr-issue-labels` reads the
+closing links present at the triggering event; a link added later in the sidebar takes effect on the
+next `edited` run.
 
 ### Inputs
 
@@ -73,6 +79,27 @@ triggering event; a link added later in the sidebar takes effect on the next `ed
 |---|---|---|
 | `patterns` | yes | JSON array of `{"label", "pattern"}` objects. Each pattern is a POSIX extended regular expression matched case-insensitively (`grep -niE`, `LC_ALL=C`, so case folding is ASCII) against the title, the body, and the messages of the pull request's own commits (`base..head`). Backslashes are JSON-escaped: `\\.` for a literal dot. |
 | `remediation-hint` | no | Text printed under the failure message. Empty means no hint. |
+
+#### Merge-queue candidates
+
+On a `merge_group` event the event carries no pull-request fields, so `pr-attribution` derives them:
+
+- The pull request is the `<number>` in the candidate's ref,
+  `refs/heads/gh-readonly-queue/<base branch>/pr-<number>-<sha>`, whose `<base branch>` must equal
+  the event's base ref. Its title and body are read from the REST API with the job's token, and it
+  must be open and target that base branch.
+- The commit range is `origin/<base branch>..<candidate head>`: every commit the candidate would add
+  to the base branch, including those of any entry queued ahead of it, and none already landed.
+- Each queue entry is scanned through its own candidate. With the `ALLGREEN` grouping strategy every
+  entry's candidate must pass, so every queued pull request's title and body is checked; with
+  `HEADGREEN` only the last entry's candidate gates a group, and earlier entries' titles and bodies
+  are covered only by their `pull_request` runs.
+- A title or body edited after its candidate's run is not re-checked before the merge; the
+  `edited` run checks the pull request, not the candidate. Under a rebase merge neither enters the
+  branch history.
+- An unparsable ref, a base mismatch, an unreadable, closed, or retargeted pull request, a missing
+  token, or an unresolvable range fails the run. Without `pull-requests: read` the API read may be
+  refused, and then every candidate fails.
 
 `pr-issue-labels`
 

@@ -24,6 +24,12 @@ changing the repository.
 - **Compatibility surfaces** (a break is a major version): action directory names; input names,
   required/default status, and semantics; the caller permissions each action needs; the trigger
   types a caller must list; exit semantics. See the README's Versioning section.
+- **Merge-queue candidates are first-class events.** `pr-attribution` scans a `merge_group`
+  candidate from `origin/<base>` to its head and reads the queued pull request's title and body from
+  the API; the workspace merge-queue rollout
+  ([ADR-0099](https://github.com/stratechio/stratech-ops/blob/main/decisions/0099-native-merge-queue.md))
+  relies on it. Never derive a candidate's range from `HEAD^1` or from the event's `base_sha`: on a
+  rebase-method candidate they point at unlanded commits.
 
 ## Layout
 
