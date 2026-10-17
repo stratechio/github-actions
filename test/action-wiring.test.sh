@@ -73,10 +73,16 @@ class AttributionWiringTest(unittest.TestCase):
         self.assertNotIn('uses', scan)
         self.assertEqual(scan['shell'], 'bash')
         self.assertEqual(scan['env'], {
+            'EVENT_NAME': '${{ github.event_name }}',
             'PR_TITLE': '${{ github.event.pull_request.title }}',
             'PR_BODY': '${{ github.event.pull_request.body }}',
             'BASE_SHA': '${{ github.event.pull_request.base.sha }}',
             'HEAD_SHA': '${{ github.event.pull_request.head.sha }}',
+            'MG_HEAD_SHA': '${{ github.event.merge_group.head_sha }}',
+            'MG_HEAD_REF': '${{ github.event.merge_group.head_ref }}',
+            'MG_BASE_REF': '${{ github.event.merge_group.base_ref }}',
+            'REPOSITORY': '${{ github.repository }}',
+            'GH_TOKEN': "${{ github.event_name == 'merge_group' && github.token || '' }}",
             'PATTERNS': '${{ inputs.patterns }}',
             'REMEDIATION_HINT': '${{ inputs.remediation-hint }}',
         })
