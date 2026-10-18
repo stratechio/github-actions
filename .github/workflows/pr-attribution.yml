@@ -19,11 +19,18 @@ name: pr-attribution
 # SHA and version comment on the `uses:` line may differ between repositories
 # (Dependabot bumps them). Reference and maintenance procedure:
 # https://github.com/stratechio/stratech-ops/blob/main/engineering/github/INDEX.md
+#
+# merge_group scans a merge-queue candidate (from v1.1.0), reading the queued
+# pull request through the API, hence pull-requests: read. The trigger is inert
+# in a repository without a queue. Queue rollout:
+# https://github.com/stratechio/stratech-ops/blob/main/decisions/0099-native-merge-queue.md
 
 on:
   pull_request:
     branches: [main]
     types: [opened, edited, reopened, synchronize]
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: pr-attribution-${{ github.ref }}
@@ -34,10 +41,11 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      pull-requests: read
 
     steps:
       - name: Check PR title, body and commits for AI-attribution trailers
-        uses: stratechio/github-actions/pr-attribution@cc61110931cc06b7052d84a650bacbf23bc4463a # v1.0.0
+        uses: stratechio/github-actions/pr-attribution@822f77f9d687d02d7196ad44ee67f75580842513 # v1.1.0
         with:
           # Label/pattern pairs verbatim from check-pr-attribution.sh; the
           # backslashes are doubled because this block is JSON.
