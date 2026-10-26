@@ -42,6 +42,6 @@ jobs:
 
     steps:
       - name: Copy the closing issues' labels onto the pull request
-        uses: stratechio/github-actions/pr-issue-labels@6b105793c4a6ecbb5ed442e2b01e3b9da14271ac # v1.0.1
+        uses: stratechio/github-actions/pr-issue-labels@822f77f9d687d02d7196ad44ee67f75580842513 # v1.1.0
         with:
           exclude-label-prefixes: "stage:"
