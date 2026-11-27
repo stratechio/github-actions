@@ -13,8 +13,8 @@ name: pr-issue-labels
 # edit the PR title or body to refresh labels from the current closing issues.
 #
 # ADDITIVE and SAME-REPO only. Labels are added, never removed, so a label put
-# on the PR by hand or by a script (automation:*) survives. stage:* stays on
-# the issue: the outcome's delivery stage is not the PR's review state. Issues
+# on the PR by hand or by a script (automation:*) survives. stage:* describes
+# the issue's delivery stage. last-agent:* records each item's own provenance. Issues
 # in other repositories are skipped - GITHUB_TOKEN cannot read them anyway.
 # Fail-closed: an API failure fails the run instead of silently leaving the PR
 # unlabeled.
@@ -44,4 +44,4 @@ jobs:
       - name: Copy the closing issues' labels onto the pull request
         uses: stratechio/github-actions/pr-issue-labels@822f77f9d687d02d7196ad44ee67f75580842513 # v1.1.0
         with:
-          exclude-label-prefixes: "stage:"
+          exclude-label-prefixes: "stage:, last-agent:"
